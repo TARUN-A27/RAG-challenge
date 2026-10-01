@@ -1,0 +1,4 @@
+{
+  "specs/backplane_pinout.png": "TQ-40 backplane connector - pin assignment\nB11  B12  B13  B14  B15  B16\nGND  SDA  SCL  THERM_ALERT#  PRSNT#  GND\nTHERM_ALERT# is asserted low when the die exceeds the warning threshold. It is the only open-drain pin in the row.\nSheet 4 of 9 - mechanical drawings are in a separate package.",
+  "support/asset_label.jpg": "Orrery Systems\nMODEL TQ-40\nBOARD REVISION REV-C2\nSN OS4-118823-77\nMADE IN MALAYSIA"
+}

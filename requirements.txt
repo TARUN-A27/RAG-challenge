@@ -1,0 +1,9 @@
+# Never list torch, torchvision or pillow here: the base image ships the ROCm builds, and the Dockerfile
+# constrains them. Pin exact versions (pip freeze inside the working image) once the GPU run is validated.
+transformers>=4.57      # Qwen3-VL support
+tokenizers
+safetensors
+huggingface_hub
+pypdf
+python-docx
+openpyxl

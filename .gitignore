@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+*.pyc
+app/index/
+
+# model weights: downloaded by scripts/get_weights.sh, baked into the image, never committed
+models/*
+!models/.gitkeep
+
+# generated test corpus: rebuild with tests/make_corpus.py
+tests/extra/
+
+# the organizers' starter kit: download mc3-starter-kit.zip from the challenge page, unzip into the repo root
+mc3-corpus/
+sample-questions.json
+selfcheck.py
+setup.sh
+CONTRACT.md
+README.txt

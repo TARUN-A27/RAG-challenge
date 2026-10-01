@@ -1,0 +1,8 @@
+.venv
+.git
+mc3-corpus
+tests
+dev
+scripts
+__pycache__
+*.pyc
