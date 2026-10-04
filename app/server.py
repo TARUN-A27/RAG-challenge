@@ -98,6 +98,17 @@ def main():
     t0 = time.monotonic()
     model = backends.make()
     log(f"model loaded in {time.monotonic() - t0:.1f}s")
+    try:                    # the first call compiles GPU kernels; do it now, not inside a graded question
+        import io
+
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new("RGB", (224, 224), "white").save(buf, "PNG")
+        model.generate("Reply with OK.", [buf.getvalue()], 4)
+        model.generate("Reply with OK.", [], 4)
+        log(f"warmed up after {time.monotonic() - t0:.1f}s")
+    except Exception as e:  # not fatal: the first question is just slower
+        log(f"warm-up failed: {e}")
     chunks = ingest.load(INDEX_DIR)     # survives a server restart
     if chunks:
         idx = rag.Index(chunks)

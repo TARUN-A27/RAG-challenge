@@ -13,10 +13,12 @@ RUN pip freeze 2>/dev/null | grep -iE '^(torch|torchvision|torchaudio|triton|pyt
  && python3 -c "import torch, torchvision; assert '+rocm' in torch.__version__, torch.__version__; print('OK', torch.__version__, torchvision.__version__)"
 
 # The evaluation container has NO outbound network: weights ship inside the image (scripts/get_weights.sh).
-# Fail the build, not the evaluation, if they are missing.
+# Fail the build, not the evaluation, if they are missing. `--build-arg MC3_LLM=stub` builds a test image with no
+# model, only to check the container's plumbing on a machine without a GPU (scripts/docker_check.sh). NEVER submit it.
+ARG MC3_LLM=qwen
 COPY models/ /models/
-RUN test -f /models/Qwen3-VL-4B-Instruct/config.json || { echo "weights missing: run scripts/get_weights.sh first" >&2; exit 1; }
-ENV HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONUNBUFFERED=1
+RUN [ "$MC3_LLM" = "stub" ] || test -f /models/Qwen3-VL-4B-Instruct/config.json || { echo "weights missing: run scripts/get_weights.sh first" >&2; exit 1; }
+ENV MC3_LLM=$MC3_LLM HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONUNBUFFERED=1
 
 COPY app/ /app/
 RUN chmod +x /app/start.sh && mkdir -p /app/corpus /app/output /app/index

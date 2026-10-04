@@ -8,7 +8,7 @@ models/*
 !models/.gitkeep
 
 # generated test corpus: rebuild with tests/make_corpus.py
-tests/extra/
+tests/extra*/
 
 # the organizers' starter kit: download mc3-starter-kit.zip from the challenge page, unzip into the repo root
 mc3-corpus/
@@ -17,3 +17,7 @@ selfcheck.py
 setup.sh
 CONTRACT.md
 README.txt
+dist/
+
+# machine-made knowledge graph (graphify): regenerate with `graphify update .`
+graphify-out/

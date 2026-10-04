@@ -74,9 +74,20 @@ class Ollama:
         return re.sub(r"<think>.*?</think>", "", text, flags=re.S)
 
 
+class Stub:
+    """Refuses everything. For checking the CONTAINER (no network, index, query, JSON, timing) on a machine with no GPU
+    and no weights: MC3_LLM=stub. An image built with it answers nothing, so it must never be submitted."""
+
+    def __init__(self):
+        print("WARNING: MC3_LLM=stub - this container answers nothing", flush=True)
+
+    def generate(self, prompt, images=(), max_new_tokens=64):
+        return "ANSWER: NONE\nSOURCES: NONE\nNEED: NONE"
+
+
 def make(name=None):
     name = name or os.environ.get("MC3_LLM", "qwen")
-    return {"qwen": QwenVL, "ollama": Ollama}[name]()
+    return {"qwen": QwenVL, "ollama": Ollama, "stub": Stub}[name]()
 
 
 def reader(llm):

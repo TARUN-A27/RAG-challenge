@@ -6,12 +6,17 @@ unreadable file, an unknown type, empty directories) but ~70 files and look-alik
 near-identical constant names across services, memos that repeat a value without being its source,
 a ticket reachable only through a log line, and prices that exist only inside the encrypted file.
 
-    .venv/bin/python tests/make_corpus.py        # -> tests/extra/{corpus/, questions.json, ocr_fixtures.json}
+    .venv/bin/python tests/make_corpus.py             # -> tests/extra/{corpus/, questions.json, questions_para.json, ocr_fixtures.json}
+    .venv/bin/python tests/make_corpus.py --scale 4   # + ~3x more look-alike products, tickets, logs, services -> tests/extra4/
+
+questions_para.json asks the same questions in different words, to test retrieval that does not lean on the
+document's own vocabulary.
 
 Seeded, so every run produces the same corpus. Needs fpdf2 (dev only).
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import random
@@ -24,13 +29,15 @@ from fpdf import FPDF
 from PIL import Image, ImageDraw, ImageFont
 from pypdf import PdfReader, PdfWriter
 
-OUT = Path(__file__).resolve().parent / "extra"
+HERE = Path(__file__).resolve().parent
+OUT = HERE / "extra"
 C = OUT / "corpus"
-R = random.Random(7)
+R = random.Random(7)        # the base corpus: its sequence never changes, so old results stay comparable
+R2 = random.Random(99)      # everything added later: the long log and the extra look-alikes
 
 PRODUCTS = [("VX-12", "Falcon"), ("VX-18", "Osprey"), ("KR-7", "Heron"), ("KR-9", "Ibis"), ("ZN-30", "Condor"),
             ("ZN-31", "Kestrel"), ("PL-4", "Merlin"), ("PL-8", "Harrier"), ("QS-2", "Swift"), ("QS-5", "Tern")]
-Q = []              # questions
+Q, QP = [], []      # questions, and the same questions worded differently
 FIX = {}            # image path -> what a good vision model would transcribe
 
 
@@ -53,9 +60,11 @@ def pdf(rel, lines):
     return p
 
 
-def ask(q, answer, cites, **kw):
-    Q.append({"n": len(Q) + 1, "query": q, "expected_answer": answer, "answer_aliases": kw.pop("aliases", []),
-              "expected_citations": cites, **kw})
+def ask(q, answer, cites, para=None, **kw):
+    base = {"n": len(Q) + 1, "expected_answer": answer, "answer_aliases": kw.pop("aliases", []),
+            "expected_citations": cites, **kw}
+    Q.append({**base, "query": q})
+    QP.append({**base, "query": para or q})
 
 
 font = lambda n: ImageFont.load_default(size=n)     # noqa: E731
@@ -90,7 +99,50 @@ def pinout_png(rel, pid, pins, hot):
                 + f"\n{hot} is asserted low when the die exceeds the warning threshold.")
 
 
-def main():
+def extras(n, tickets, versions):
+    """Distractor volume that changes no expected answer: more products (some with near-miss names), tickets, logs, services."""
+    base = {p for p, _ in PRODUCTS}
+    pids = ["VX-120", "VX-21", "KR-70", "ZN-3", "PL-40", "QS-25"]
+    pids += [f"{R2.choice(['VX', 'KR', 'ZN', 'PL', 'QS', 'TX', 'MR'])}-{R2.randint(100, 999)}" for _ in range(10 * n)]
+    pids = [p for p in dict.fromkeys(pids) if p not in base]
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Fans"
+    ws.append(["part_number", "description", "compatible_with", "unit_cost_usd", "lead_time_days"])
+    for pid in pids:
+        tj, fan = R2.randint(78, 104), f"HLX-FAN-{R2.randint(1000, 9999)}-{R2.choice('ABCD')}"
+        pdf(f"specs/{pid.lower()}_datasheet_r2.pdf", [f'Halcyon Labs {pid} "Accelerator"', "Datasheet, revision 2 - supersedes revision 1",
+                                                      f"Maximum junction temperature .......... {tj} C", f"Board power (TBP) ..................... {R2.randrange(180, 620, 5)} W",
+                                                      f"Fan assembly part ..................... {fan}", "Revision history", "r1  Initial release."])
+        if R2.random() < 0.5:
+            pdf(f"specs/{pid.lower()}_datasheet_r1_WITHDRAWN.pdf", [f'Halcyon Labs {pid} "Accelerator"', "Datasheet, revision 1 - WITHDRAWN, REPLACED BY REVISION 2",
+                                                                     f"Maximum junction temperature .......... {tj + R2.randint(4, 14)} C"])
+        ws.append([fan, "Fan assembly, dual-rotor, field replaceable", pid, round(R2.uniform(40, 120), 2), R2.randint(7, 60)])
+    wb.save(put("support/rma_parts_extra.xlsx", None))
+    summaries = ["Sensor reads high under sustained small-batch load", "Doorbell hang after link retrain", "Fan curve too aggressive at idle",
+                 "ECC scrub interval ignored", "Telemetry export drops the last sample", "Firmware update leaves stale NVRAM entry"]
+    num, rows = 6000, []
+    for _ in range(40 * n):
+        num += R2.randint(1, 9)
+        fx = R2.choice(versions + [""])
+        rows.append(f"HLX-{num},{R2.choice(['power', 'pcie', 'thermal', 'firmware'])},{R2.choice(['S2', 'S3', 'S4'])},{R2.choice(summaries)},{'closed' if fx else 'open'},{fx}")
+    put("support/bugs_2027.csv", "ticket,component,severity,summary,status,fixed_in\n" + "\n".join(rows) + "\n")
+    for k in range(8 * n):
+        node, date = R2.randint(13, 40), f"2026-{R2.randint(1, 9):02d}-{R2.randint(10, 28):02d}"
+        put(f"logs/node-{node}_{date}.log", "\n".join(
+            [f"{date}T03:{m:02d}:00Z node-{node} halcyon[1]: INFO  scheduler: batch {R2.randint(10000, 99999)} accepted" for m in range(10)]
+            + [f"{date}T03:30:03Z node-{node} halcyon[2211]: ERROR E{R2.randint(1000, 9999)}: link retrain failed",
+               f"{date}T03:31:03Z node-{node} halcyon[2211]: INFO  incident logged against HLX-{R2.choice(rows).split(',')[0].split('-')[1]}"]) + "\n")
+    for name in ["gateway", "indexer", "archiver", "mailer", "auth", "metrics", "cache", "queue", "report", "sync"][: 3 * n]:
+        put(f"engineering/svc_{name}.py", f'"""{name.capitalize()} service."""\n\n# Seconds a batch may wait before it is abandoned.\n'
+            f"DEFAULT_BATCH_TIMEOUT_S = {R2.choice([30, 45, 90, 120, 150, 240])}\n\nMAX_RETRIES = {R2.randint(2, 9)}\n")
+
+
+def main(scale=1):
+    global OUT, C
+    if scale > 1:
+        OUT = HERE / f"extra{scale}"
+        C = OUT / "corpus"
     if OUT.exists():
         for dp, dn, fn in os.walk(OUT):             # the unreadable file / locked dirs from a previous run
             for n in dn + fn:
@@ -120,7 +172,8 @@ def main():
             "Electrical and thermal", f"Maximum junction temperature .......... {f['tj']} C",
             f"Board power (TBP) ..................... {f['power']} W", "Memory",
             f"Capacity .............................. {f['mem']} GiB HBM3e", "Cooling",
-            f"Fan assembly part ..................... {f['fan']}", "Revision history",
+            *([f"Fan assembly part ..................... {f['fan']}"] if pid == "ZN-30" else []),      # only the true chain's datasheet names its fan
+            "Revision history",
             f"r2  Junction temperature corrected to {f['tj']} C after production characterisation. Revision 1 is withdrawn.",
             "r1  Initial release, preliminary silicon."])
         if i < 6:
@@ -152,7 +205,7 @@ def main():
     ws.append(["part_number", "description", "compatible_with", "unit_cost_usd", "lead_time_days"])
     for pid, _ in PRODUCTS:
         f = facts[pid]
-        ws.append([f["fan"], "Fan assembly, dual-rotor, field replaceable", pid, round(R.uniform(40, 120), 2), f["lead"]])
+        ws.append([f["fan"], "Fan assembly, dual-rotor, field replaceable", pid if pid != "ZN-30" else "see product datasheet", round(R.uniform(40, 120), 2), f["lead"]])
         ws.append([f["legacy"], "Fan assembly, single-rotor (legacy)", f"{pid[:2]}-{int(pid[3:]) - 1}", round(R.uniform(30, 70), 2), R.randint(7, 40)])
     ws = wb.create_sheet("Heatsinks")
     ws.append(["part_number", "description", "compatible_with", "unit_cost_usd", "lead_time_days"])
@@ -178,9 +231,10 @@ def main():
                          R.choice(summaries), "closed" if fixed else "open", fixed])
         put(f"support/bugs_{year}.csv", "ticket,component,severity,summary,status,fixed_in\n"
             + "\n".join(",".join(f'"{c}"' if "," in c else c for c in r) for r in rows) + "\n")
-    for v in versions[:4]:
-        put(f"engineering/release_notes_{v}.txt", f"Halcyon firmware {v} - release notes\n\nScheduler and thermal tuning. "
-            f"Fixes are tracked per ticket in the bug database, which is authoritative.\n")
+    released = {v: f"2026-{i + 1:02d}-{10 + i:02d}" for i, v in enumerate(versions)}
+    for v in versions:
+        put(f"engineering/release_notes_{v}.txt", f"Halcyon firmware {v} - release notes\nReleased: {released[v]}\n\n"
+            f"Scheduler and thermal tuning. Fixes are tracked per ticket in the bug database, which is authoritative.\n")
 
     err = [("E5127", "thermal throttle engaged on die 0, clocks reduced to 60%"), ("E6310", "ECC uncorrectable error on HBM stack 2"),
            ("E7044", "PCIe link retrain failed, downgraded to x8"), ("E4419", "fan tach below threshold on fan 1")]
@@ -201,6 +255,14 @@ def main():
         put(rel, "\n".join(lines) + "\n")
         facts[rel] = dict(node=node, date=date, code=code, ticket=tk, year=tickets[tk][0], fixed=tickets[tk][1], msg=msg)
 
+    # ---- one very long log: the error line is one of ~3000 lines that all talk about temperature ---------------------
+    ln, ld = 7, "2026-09-01"
+    long_rel, long_code = f"logs/node-{ln}_{ld}.log", f"E8{R2.randint(100, 999)}"
+    body = [f"{ld}T{(i // 120) % 24:02d}:{(i // 2) % 60:02d}:{i % 60:02d}Z node-{ln} halcyon[{R2.randint(1000, 9999)}]: INFO  "
+            f"scheduler: batch {R2.randint(10000, 99999)} accepted, thermal die 0 at {R2.randint(60, 80)}C" for i in range(3000)]
+    body.insert(1710, f"{ld}T14:15:00Z node-{ln} halcyon[2211]: ERROR {long_code}: thermal throttle engaged on die 1, clocks reduced to 55%")
+    put(long_rel, "\n".join(body) + "\n")
+
     # ---- services: near-identical constants ------------------------------------------------------------
     svc = {}
     for name in ["ingest", "export", "scheduler", "billing", "audit", "notify"]:
@@ -209,6 +271,9 @@ def main():
         put(f"engineering/svc_{name}.py", f'"""{name.capitalize()} service."""\n\n# Seconds a batch may wait before it is abandoned.\n'
             f"# Raised from {old} after the 2026-08 backlog incident.\nDEFAULT_BATCH_TIMEOUT_S = {to}\n\nMAX_RETRIES = {mr}\n"
             f'STAGING_ROOT = "/var/lib/halcyon/{name}"\n\n\ndef accept(batch, timeout_s=DEFAULT_BATCH_TIMEOUT_S):\n    return batch.enqueue(timeout_s)\n')
+
+    if scale > 1:
+        extras(scale - 1, tickets, versions)
 
     # ---- memos: repeat a value without being its source ------------------------------------------------
     for pid in ("VX-12", "KR-9", "PL-4"):
@@ -243,44 +308,57 @@ def main():
 
     # ---- questions ------------------------------------------------------------------------------------
     f = facts["VX-12"]
-    ask("What is the maximum junction temperature of the VX-12?", str(f["tj"]), ["specs/vx-12_datasheet_r2.pdf"], note="withdrawn r1 + a memo repeating the value")
+    ask("What is the maximum junction temperature of the VX-12?", str(f["tj"]), ["specs/vx-12_datasheet_r2.pdf"], para="What is the highest die temperature the VX-12 is rated to run at?", note="withdrawn r1 + a memo repeating the value")
     f = facts["ZN-31"]
-    ask("What is the maximum junction temperature of the ZN-31?", str(f["tj"]), ["specs/zn-31_datasheet_r2.pdf"])
+    ask("What is the maximum junction temperature of the ZN-31?", str(f["tj"]), ["specs/zn-31_datasheet_r2.pdf"], para="Up to what temperature can the silicon in a ZN-31 safely run?")
     f = facts["PL-4"]
-    ask(f"What is the board power of the {f['name']}?", str(f["power"]), ["specs/pl-4_datasheet_r2.pdf"], note="asked by codename")
+    ask(f"What is the board power of the {f['name']}?", str(f["power"]), ["specs/pl-4_datasheet_r2.pdf"], para=f"How many watts can the {f['name']} board draw?", note="asked by codename")
     f = facts["KR-9"]
     rd = "planning/roadmap_fy27.docx" if f["quarter"].endswith("27") else "planning/roadmap_fy28.docx"
-    ask(f"In which quarter does the {f['name']} enter customer sampling?", f["quarter"], [rd], aliases=[f["quarter"].replace(" ", "")], note="docx table")
+    ask(f"In which quarter does the {f['name']} enter customer sampling?", f["quarter"], [rd], aliases=[f["quarter"].replace(" ", "")], para=f"When do customers start receiving the first {f['name']} units to evaluate?", note="docx table")
     f = facts["QS-2"]
-    ask("What is the part number of the field-replaceable fan assembly for the QS-2?", f["fan"], ["support/rma_parts.xlsx"], note="legacy single-rotor fan is the near miss")
+    ask("What is the part number of the field-replaceable fan assembly for the QS-2?", f["fan"], ["support/rma_parts.xlsx"], para="From the RMA catalogue, which part should I order to swap out the cooling fan on a QS-2?", note="legacy single-rotor fan is the near miss")
     f = facts["VX-18"]
-    ask(f"What is the lead time, in days, of part {f['fan']}?", str(f["lead"]), ["support/rma_parts.xlsx"])
+    ask(f"What is the lead time, in days, of part {f['fan']}?", str(f["lead"]), ["support/rma_parts.xlsx"], para=f"How many days until {f['fan']} can be delivered?")
     t, (yr, fx) = next(iter((t, v) for t, v in tickets.items() if v[1]))
-    ask(f"Which firmware version fixed ticket {t}?", fx, [f"support/bugs_{yr}.csv"])
+    ask(f"Which firmware version fixed ticket {t}?", fx, [f"support/bugs_{yr}.csv"], para=f"{t} was resolved in which firmware release?")
     lg = facts[log_files[0]]
-    ask(f"What error code is logged on node-{lg['node']} on {lg['date']}?", lg["code"], [log_files[0]])
-    ask("What is the default batch timeout, in seconds, in the export service?", str(svc["export"][0]), ["engineering/svc_export.py"], note="a comment names an old value")
-    ask("What is the maximum number of retries in the billing service?", str(svc["billing"][1]), ["engineering/svc_billing.py"])
+    ask(f"What error code is logged on node-{lg['node']} on {lg['date']}?", lg["code"], [log_files[0]], para=f"Which error number does node-{lg['node']} report on {lg['date']}?")
+    ask("What is the default batch timeout, in seconds, in the export service?", str(svc["export"][0]), ["engineering/svc_export.py"], para="How long will the export service let a batch wait in the queue by default before giving up?", note="a comment names an old value")
+    ask("What is the maximum number of retries in the billing service?", str(svc["billing"][1]), ["engineering/svc_billing.py"], para="How many times will the billing service retry before it stops trying?")
     lg = facts[log_files[1]]
     ask(f"The production log for node-{lg['node']} on {lg['date']} shows an incident. Which firmware release fixed the underlying defect?",
-        lg["fixed"], [log_files[1], f"support/bugs_{lg['year']}.csv"], note="two files: the log names the ticket")
+        lg["fixed"], [log_files[1], f"support/bugs_{lg['year']}.csv"],
+        para=f"Node-{lg['node']} had an incident on {lg['date']} according to its production log. In which firmware version was the root cause corrected?",
+        note="two files: the log names the ticket")
     f = facts["ZN-30"]
     ask("What is the lead time in days of the fan assembly specified in the ZN-30 datasheet?", str(f["lead"]),
-        ["specs/zn-30_datasheet_r2.pdf", "support/rma_parts.xlsx"], note="two files: the datasheet names the part")
-    ask("What board revision is printed on the VX-12 asset label?", facts["VX-12"]["rev"], ["support/label_vx-12.png"], note="picture only")
-    ask("What board revision is printed on the QS-5 asset label?", facts["QS-5"]["rev"], ["support/label_qs-5.png"], note="picture only")
+        ["specs/zn-30_datasheet_r2.pdf", "support/rma_parts.xlsx"], para="For the cooling fan listed in the ZN-30 datasheet, how many days does delivery take?",
+        note="two files: ZN-30's RMA row does not name the product, so only the part number in the datasheet leads to it")
+    ask("What board revision is printed on the VX-12 asset label?", facts["VX-12"]["rev"], ["support/label_vx-12.png"], para="Which hardware revision does the sticker on the VX-12 show?", note="picture only")
+    ask("What board revision is printed on the QS-5 asset label?", facts["QS-5"]["rev"], ["support/label_qs-5.png"], para="What revision number appears on the label of the QS-5 board?", note="picture only")
     hot, pl = pins["KR-7"]
-    ask(f"Which backplane pin carries {hot} on the KR-7?", next(p for p, s in pl if s == hot), ["specs/kr-7_pinout.png"], note="picture only")
+    ask(f"Which backplane pin carries {hot} on the KR-7?", next(p for p, s in pl if s == hot), ["specs/kr-7_pinout.png"], para=f"On the KR-7 backplane connector, where is the {hot} signal wired?", note="picture only")
     hot, pl = pins["PL-8"]
-    ask(f"Which backplane pin carries {hot} on the PL-8?", next(p for p, s in pl if s == hot), ["specs/pl-8_pinout.png"], note="picture only")
-    ask("What is the unit price of the VX-18 at 10,000 unit volume?", "", [], unanswerable=True, note="exists only in the encrypted PDF")
-    ask("What is the maximum junction temperature of the XQ-99?", "", [], unanswerable=True, note="no such product")
-    ask("Who signed the 2025 internal audit?", "", [], unanswerable=True, note="exists only in the unreadable file")
+    ask(f"Which backplane pin carries {hot} on the PL-8?", next(p for p, s in pl if s == hot), ["specs/pl-8_pinout.png"], para=f"Which connector pin on the PL-8 backplane is assigned {hot}?", note="picture only")
+    lg = facts[log_files[2]]
+    ask(f"The production log for node-{lg['node']} on {lg['date']} shows an incident. On what date was the firmware release that fixed the underlying defect published?",
+        released[lg["fixed"]], [log_files[2], f"support/bugs_{lg['year']}.csv", f"engineering/release_notes_{lg['fixed']}.txt"],
+        para=f"Node-{lg['node']} logged an incident on {lg['date']}. When was the firmware version that corrected the root cause made available?",
+        note="three files: log -> ticket -> release notes")
+    ask(f"What error code does node-{ln} log on {ld} when the thermal throttle engages?", long_code, [long_rel],
+        para=f"Which error code appears in node-{ln}'s {ld} log for the throttling event?", note="one of ~3000 near-identical lines")
+    ask("What is the unit price of the VX-18 at 10,000 unit volume?", "", [], para="How much does a single VX-18 cost when buying ten thousand of them?", unanswerable=True, note="exists only in the encrypted PDF")
+    ask("What is the maximum junction temperature of the XQ-99?", "", [], para="How hot can an XQ-99 run?", unanswerable=True, note="no such product")
+    ask("Who signed the 2025 internal audit?", "", [], para="Which person approved the 2025 internal audit?", unanswerable=True, note="exists only in the unreadable file")
 
     (OUT / "questions.json").write_text(json.dumps({"corpus": "corpus", "queries": Q}, indent=1))
+    (OUT / "questions_para.json").write_text(json.dumps({"corpus": "corpus", "queries": QP}, indent=1))
     (OUT / "ocr_fixtures.json").write_text(json.dumps(FIX, indent=1))
     print(f"{sum(len(fn) for _, _, fn in os.walk(C))} files, {len(Q)} questions -> {OUT}")
 
 
 if __name__ == "__main__":
-    main()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--scale", type=int, default=1, help="1 = the base corpus; N adds (N-1) x more look-alike files")
+    main(ap.parse_args().scale)

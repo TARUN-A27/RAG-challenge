@@ -68,7 +68,7 @@ def main() -> int:
 
     if args.index is not None:
         try:
-            r = call({"cmd": "index", "corpus": str(args.index)}, wait=540, timeout=590)
+            r = call({"cmd": "index", "corpus": str(args.index.resolve())}, wait=540, timeout=590)
         except Exception as e:
             print(f"index failed: server unreachable: {e}", file=sys.stderr)
             return 1
@@ -81,7 +81,7 @@ def main() -> int:
     start = time.monotonic()
     out = {"answer": "", "citations": [], "confidence": 0.0}
     try:
-        r = call({"cmd": "query", "corpus": str(args.corpus), "query": args.query},
+        r = call({"cmd": "query", "corpus": str(args.corpus.resolve()), "query": args.query},
                  wait=QUERY_WAIT_S - 5, timeout=QUERY_WAIT_S)
         if "error" in r:
             raise RuntimeError(r["error"])
